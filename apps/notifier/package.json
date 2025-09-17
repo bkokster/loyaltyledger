@@ -1,0 +1,14 @@
+{
+  "name": "notifier",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsx": "^3.14.0"
+  }
+}
