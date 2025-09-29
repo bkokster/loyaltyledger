@@ -1,5 +1,5 @@
 import fp from 'fastify-plugin';
-import type { FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { Pool } from 'pg';
 import { promisify } from 'util';
 import { scrypt as scryptCb, timingSafeEqual } from 'crypto';
@@ -62,6 +62,6 @@ async function authenticateRequest(request: FastifyRequest, reply: FastifyReply)
   return;
 }
 
-export default fp(async (app) => {
+export default fp(async (app: FastifyInstance) => {
   app.addHook('preHandler', authenticateRequest);
 });

@@ -12,7 +12,9 @@ const lineItemSchema = z.object({
 const receiptSchema = z.object({
   schema_version: z.string().default('1.0'),
   idempotency_key: z.string().min(1),
-  issued_at: z.string().refine((value) => !Number.isNaN(Date.parse(value)), 'issued_at must be an ISO date'),
+  issued_at: z
+    .string()
+    .refine((value: string) => !Number.isNaN(Date.parse(value)), 'issued_at must be an ISO date'),
   currency: z.string().min(1),
   merchant: z.object({
     merchant_id: z.string().min(1),
