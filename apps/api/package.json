@@ -8,9 +8,14 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "fastify": "^4.26.2"
+    "dotenv": "^17.2.2",
+    "fastify": "^4.26.2",
+    "fastify-plugin": "^5.1.0",
+    "pg": "^8.16.3",
+    "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@types/pg": "^8.15.5",
     "tsx": "^3.14.0"
   }
 }
