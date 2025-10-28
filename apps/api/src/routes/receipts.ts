@@ -1,13 +1,15 @@
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { PoolClient } from 'pg';
-import { DEFAULT_PROGRAM_ID, DEFAULT_UNIT } from '../config.js';
-import { customerAccountId, merchantAccountId } from '../accounts.js';
 import { withTransaction } from '../db.js';
 import { computeReceiptFingerprint, generateId } from '../utils.js';
 import { parseReceipt } from '../validators.js';
 
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
 interface ReceiptReply {
   receipt_id: string;
+  processing_job_id: string;
+  status: JobStatus;
   summary?: {
     points_earned: number;
   };
@@ -16,7 +18,7 @@ interface ReceiptReply {
 type ErrorReply = { error: string; details?: unknown };
 
 export async function registerReceiptRoutes(app: FastifyInstance) {
-  app.post<{ Body: unknown; Reply: ReceiptReply | { receipt_id: string } | ErrorReply }>(
+  app.post<{ Body: unknown; Reply: ReceiptReply | { receipt_id: string; processing_job_id?: string; status?: JobStatus } | ErrorReply }>(
     '/v1/receipts',
     async (request, reply) => {
       const tenantId = request.tenantId;
@@ -34,13 +36,10 @@ export async function registerReceiptRoutes(app: FastifyInstance) {
       }
 
       const fingerprint = computeReceiptFingerprint(tenantId, receipt);
-      const merchantAccount = merchantAccountId(tenantId);
-      const customerAccount = customerAccountId(tenantId, receipt.buyer.account_ref);
-      const pointsEarned = Math.round(receipt.totals.grand_total);
-
       try {
         const outcome = await withTransaction<
-          { duplicate: true; receiptId: string } | { duplicate: false; receiptId: string; pointsEarned: number }
+          | { duplicate: true; receiptId: string; jobId?: string; status?: string }
+          | { duplicate: false; receiptId: string; jobId: string }
         >(async (client: PoolClient) => {
           const existing = await client.query(
             `SELECT receipt_id FROM receipts WHERE tenant_id = $1 AND (idempotency_key = $2 OR fingerprint = $3)` ,
@@ -48,10 +47,26 @@ export async function registerReceiptRoutes(app: FastifyInstance) {
           );
 
           if ((existing.rowCount ?? 0) > 0) {
-            return { duplicate: true as const, receiptId: existing.rows[0].receipt_id };
+            const receiptId = existing.rows[0].receipt_id as string;
+            const jobRes = await client.query(
+              `SELECT job_id, status
+                 FROM receipt_jobs
+                WHERE receipt_id = $1
+             ORDER BY created_at DESC
+                LIMIT 1`,
+              [receiptId],
+            );
+
+            return {
+              duplicate: true as const,
+              receiptId,
+              jobId: jobRes.rows[0]?.job_id,
+              status: jobRes.rows[0]?.status,
+            };
           }
 
           const receiptId = generateId();
+          const jobId = generateId();
           await client.query(
             `INSERT INTO receipts (
               receipt_id, tenant_id, idempotency_key, fingerprint, buyer_account_ref, merchant_reference,
@@ -71,38 +86,30 @@ export async function registerReceiptRoutes(app: FastifyInstance) {
             ],
           );
 
-          if (pointsEarned > 0) {
-            const entryId = generateId();
-            await client.query(
-              `INSERT INTO ledger_journal (entry_id, tenant_id, program_id, receipt_id, memo)
-               VALUES ($1, $2, $3, $4, $5)` ,
-              [entryId, tenantId, DEFAULT_PROGRAM_ID, receiptId, `earn:${receipt.merchant.merchant_id}`],
-            );
+          await client.query(
+            `INSERT INTO receipt_jobs (job_id, tenant_id, receipt_id)
+             VALUES ($1, $2, $3)` ,
+            [jobId, tenantId, receiptId],
+          );
 
-            await client.query(
-              `INSERT INTO ledger_lines (entry_id, line_no, account_id, dr, cr, unit)
-               VALUES ($1, $2, $3, $4, $5, $6)` ,
-              [entryId, 1, merchantAccount, pointsEarned, 0, DEFAULT_UNIT],
-            );
-
-            await client.query(
-              `INSERT INTO ledger_lines (entry_id, line_no, account_id, dr, cr, unit)
-               VALUES ($1, $2, $3, $4, $5, $6)` ,
-              [entryId, 2, customerAccount, 0, pointsEarned, DEFAULT_UNIT],
-            );
-          }
-
-          return { duplicate: false as const, receiptId, pointsEarned };
+          return { duplicate: false as const, receiptId, jobId };
         });
 
         if (outcome.duplicate) {
-          reply.code(409).send({ receipt_id: outcome.receiptId });
+          reply
+            .code(409)
+            .send({
+              receipt_id: outcome.receiptId,
+              processing_job_id: outcome.jobId,
+              status: (outcome.status as JobStatus) ?? 'queued',
+            });
           return;
         }
 
         reply.code(202).send({
           receipt_id: outcome.receiptId,
-          summary: { points_earned: outcome.pointsEarned },
+          processing_job_id: outcome.jobId,
+          status: 'queued',
         });
       } catch (error) {
         app.log.error({ err: error }, 'Failed to ingest receipt');

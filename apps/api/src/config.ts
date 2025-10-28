@@ -1,3 +1,4 @@
+import { DEFAULT_PROGRAM_ID as CORE_DEFAULT_PROGRAM_ID, DEFAULT_UNIT as CORE_DEFAULT_UNIT } from '@loyaltyledger/core';
 import { config as loadEnv } from 'dotenv';
 import { existsSync } from 'fs';
 import { resolve } from 'path';
@@ -41,5 +42,5 @@ export const CONFIG = {
   bootstrapApiKey: env.BOOTSTRAP_API_KEY,
 };
 
-export const DEFAULT_PROGRAM_ID = 'default_points';
-export const DEFAULT_UNIT = 'points';
+export const DEFAULT_PROGRAM_ID = CORE_DEFAULT_PROGRAM_ID;
+export const DEFAULT_UNIT = CORE_DEFAULT_UNIT;

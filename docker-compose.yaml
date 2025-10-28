@@ -1,0 +1,108 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: loyalty
+      POSTGRES_PASSWORD: loyalty
+      POSTGRES_DB: loyaltyledger
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U loyalty']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ['pnpm', 'migrate']
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+      DB_RUN_MIGRATIONS: 'false'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+      DB_RUN_MIGRATIONS: 'false'
+      BOOTSTRAP_TENANT_ID: demo_tenant
+      BOOTSTRAP_API_KEY: demo_api_key
+      PORT: '3000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    ports:
+      - '3000:3000'
+
+  rule-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.rule-runner
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  notifier:
+    build:
+      context: .
+      dockerfile: Dockerfile.notifier
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+      NOTIFIER_WEBHOOK_URL: http://host.docker.internal:4000/mock-webhook
+      NOTIFIER_WEBHOOK_SECRET: dev_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  settlement:
+    build:
+      context: .
+      dockerfile: Dockerfile.settlement
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+      SETTLEMENT_LOOKBACK_DAYS: '1'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+  payments:
+    build:
+      context: .
+      dockerfile: Dockerfile.payments
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgres://loyalty:loyalty@postgres:5432/loyaltyledger
+      PAYMENTS_PSP: mock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

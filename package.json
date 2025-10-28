@@ -6,10 +6,19 @@
   "scripts": {
     "build": "pnpm -r --parallel build",
     "lint": "echo 'TODO: add root lint command'",
-    "test": "echo 'TODO: add test runner'"
+    "test": "vitest run",
+    "migrate": "node-pg-migrate -m migrations up",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down -v",
+    "docker:test": "node scripts/docker-smoke.mjs",
+    "docker:test:payments": "node scripts/docker-payments.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.5.1",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0",
+    "pg-mem": "^3.0.5",
+    "node-pg-migrate": "^7.0.1",
+    "pg": "^8.16.3"
   }
 }

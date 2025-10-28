@@ -1,21 +1,30 @@
 import Fastify from 'fastify';
 import { CONFIG } from './config.js';
-import { pool, initDb } from './db.js';
+import { getPool, initDb, closePool } from './db.js';
 import authPlugin from './plugins/auth.js';
 import { registerReceiptRoutes } from './routes/receipts.js';
 import { registerBalanceRoutes } from './routes/balances.js';
 import { registerRedeemRoutes } from './routes/redeem.js';
+import { registerReceiptStatusRoutes } from './routes/receipt-status.js';
+import { registerRedeemStatusRoutes } from './routes/redeem-status.js';
+import { registerProgramConfigRoutes } from './routes/program-configs.js';
+import { registerPaymentRoutes } from './routes/payments.js';
 export async function buildServer() {
     const app = Fastify({ logger: true });
+    const pool = getPool();
     app.decorate('db', pool);
     app.addHook('onClose', async () => {
-        await pool.end();
+        await closePool();
     });
     app.get('/healthz', async () => ({ status: 'ok' }));
     await app.register(authPlugin);
     await registerReceiptRoutes(app);
+    await registerReceiptStatusRoutes(app);
+    await registerProgramConfigRoutes(app);
     await registerBalanceRoutes(app);
     await registerRedeemRoutes(app);
+    await registerRedeemStatusRoutes(app);
+    await registerPaymentRoutes(app);
     return app;
 }
 async function start() {

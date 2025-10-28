@@ -1,4 +1,5 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
+import { generateId as coreGenerateId } from '@loyaltyledger/core';
 import type { ReceiptPayload } from './validators.js';
 
 export function computeReceiptFingerprint(tenantId: string, receipt: ReceiptPayload): string {
@@ -16,6 +17,4 @@ export function computeReceiptFingerprint(tenantId: string, receipt: ReceiptPayl
   return hash.digest('hex');
 }
 
-export function generateId(): string {
-  return randomUUID();
-}
+export const generateId = coreGenerateId;

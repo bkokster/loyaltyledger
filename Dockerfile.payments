@@ -1,0 +1,17 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY tsconfig.base.json ./
+COPY apps/payments/package.json apps/payments/
+COPY packages/core/package.json packages/core/
+
+RUN corepack enable && pnpm install --frozen-lockfile
+
+COPY . .
+
+RUN pnpm --filter @loyaltyledger/core build \
+ && pnpm --filter payments build
+
+CMD ["pnpm", "--filter", "payments", "start"]

@@ -10,8 +10,8 @@ const PUBLIC_ROUTES = new Set(['/healthz']);
 
 async function verifyApiKey(db: Pool, tenantId: string, apiKey: string) {
   const result = await db.query<{
-    api_key_hash: Buffer;
-    salt: Buffer;
+    api_key_hash: Buffer | string;
+    salt: Buffer | string;
   }>(
     `SELECT api_key_hash, salt
        FROM tenant_api_keys
@@ -23,7 +23,9 @@ async function verifyApiKey(db: Pool, tenantId: string, apiKey: string) {
     return false;
   }
 
-  const { api_key_hash: hash, salt } = result.rows[0];
+  const { api_key_hash: hashValue, salt: saltValue } = result.rows[0];
+  const hash = normaliseBytea(hashValue);
+  const salt = normaliseBytea(saltValue);
   const derived = (await scrypt(apiKey, salt, hash.length)) as Buffer;
 
   try {
@@ -31,6 +33,23 @@ async function verifyApiKey(db: Pool, tenantId: string, apiKey: string) {
   } catch {
     return false;
   }
+}
+
+function normaliseBytea(value: Buffer | string): Buffer {
+  if (Buffer.isBuffer(value)) {
+    if (value.length >= 2 && value[0] === 0x5c && value[1] === 0x78) {
+      const hex = value.toString('utf8').slice(2);
+      return Buffer.from(hex, 'hex');
+    }
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const hex = value.startsWith('\\x') ? value.slice(2) : value;
+    return Buffer.from(hex, 'hex');
+  }
+
+  throw new Error('Unexpected bytea payload');
 }
 
 async function authenticateRequest(request: FastifyRequest, reply: FastifyReply) {

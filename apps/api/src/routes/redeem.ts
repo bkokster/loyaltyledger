@@ -1,7 +1,4 @@
 import type { FastifyInstance } from 'fastify';
-import type { PoolClient } from 'pg';
-import { DEFAULT_PROGRAM_ID, DEFAULT_UNIT } from '../config.js';
-import { customerAccountId, merchantAccountId } from '../accounts.js';
 import { withTransaction } from '../db.js';
 import { generateId } from '../utils.js';
 import { redeemSchema } from '../validators.js';
@@ -12,10 +9,20 @@ interface RedeemBody {
   unit: string;
   qty: number;
   memo?: string;
+  idempotency_key?: string;
+  burn_merchant_id?: string;
 }
 
+interface RedeemReply {
+  redemption_id: string;
+  processing_job_id: string;
+  status: JobStatus;
+}
+
+type JobStatus = 'queued' | 'processing' | 'completed' | 'failed';
+
 export async function registerRedeemRoutes(app: FastifyInstance) {
-  app.post<{ Body: RedeemBody }>(
+  app.post<{ Body: RedeemBody; Reply: RedeemReply | { redemption_id: string; processing_job_id?: string; status?: JobStatus } | { error: string; details?: unknown } }>(
     '/v1/redeem',
     async (request, reply) => {
       const tenantId = request.tenantId;
@@ -30,69 +37,87 @@ export async function registerRedeemRoutes(app: FastifyInstance) {
         return;
       }
 
-      const { account_id, program_id, unit, qty, memo } = parsed.data;
-
-      if (program_id !== DEFAULT_PROGRAM_ID) {
-        reply.code(404).send({ error: 'Unknown program' });
-        return;
-      }
-
-      if (unit !== DEFAULT_UNIT) {
-        reply.code(400).send({ error: 'Unsupported unit' });
-        return;
-      }
-
-      const pointsToBurn = BigInt(qty);
-      const customerAccount = customerAccountId(tenantId, account_id);
-      const merchantAccount = merchantAccountId(tenantId);
+      const { account_id, program_id, unit, qty, memo, idempotency_key, burn_merchant_id } = parsed.data;
 
       try {
-        const result = await withTransaction(async (client: PoolClient) => {
-          const balanceRes = await client.query(
-            `SELECT COALESCE(SUM(l.cr) - SUM(l.dr), 0) AS qty
-             FROM ledger_lines l
-             JOIN ledger_journal j ON j.entry_id = l.entry_id
-             WHERE j.tenant_id = $1 AND j.program_id = $2 AND l.unit = $3 AND l.account_id = $4`,
-            [tenantId, DEFAULT_PROGRAM_ID, DEFAULT_UNIT, customerAccount],
-          );
+        const outcome = await withTransaction<
+          | { duplicate: true; requestId: string; jobId?: string; status?: string }
+          | { duplicate: false; requestId: string; jobId: string }
+        >(async (client) => {
+          if (idempotency_key) {
+            const existingReq = await client.query(
+              `SELECT request_id FROM redeem_requests WHERE tenant_id = $1 AND idempotency_key = $2`,
+              [tenantId, idempotency_key],
+            );
 
-          const currentBalance = BigInt(balanceRes.rows[0]?.qty ?? 0);
-          if (currentBalance < pointsToBurn) {
-            return { success: false as const, reason: 'Insufficient balance' };
+            if ((existingReq.rowCount ?? 0) > 0) {
+              const requestId = existingReq.rows[0].request_id as string;
+              const existingJob = await client.query(
+                `SELECT job_id, status
+                   FROM redeem_jobs
+                  WHERE request_id = $1
+               ORDER BY created_at DESC
+                  LIMIT 1`,
+                [requestId],
+              );
+
+              return {
+                duplicate: true as const,
+                requestId,
+                jobId: existingJob.rows[0]?.job_id,
+                status: existingJob.rows[0]?.status,
+              };
+            }
           }
 
-          const entryId = generateId();
+          const requestId = generateId();
+          const jobId = generateId();
+
           await client.query(
-            `INSERT INTO ledger_journal (entry_id, tenant_id, program_id, memo)
-             VALUES ($1, $2, $3, $4)` ,
-            [entryId, tenantId, DEFAULT_PROGRAM_ID, memo ?? 'redeem'],
+            `INSERT INTO redeem_requests (
+              request_id, tenant_id, account_id, program_id, unit, qty, memo, idempotency_key, burn_merchant_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)` ,
+            [
+              requestId,
+              tenantId,
+              account_id,
+              program_id,
+              unit,
+              qty,
+              memo ?? null,
+              idempotency_key ?? null,
+              burn_merchant_id ?? null,
+            ],
           );
 
           await client.query(
-            `INSERT INTO ledger_lines (entry_id, line_no, account_id, dr, cr, unit)
-             VALUES ($1, $2, $3, $4, $5, $6)` ,
-            [entryId, 1, customerAccount, qty, 0, DEFAULT_UNIT],
+            `INSERT INTO redeem_jobs (job_id, tenant_id, request_id)
+             VALUES ($1, $2, $3)` ,
+            [jobId, tenantId, requestId],
           );
 
-          await client.query(
-            `INSERT INTO ledger_lines (entry_id, line_no, account_id, dr, cr, unit)
-             VALUES ($1, $2, $3, $4, $5, $6)` ,
-            [entryId, 2, merchantAccount, 0, qty, DEFAULT_UNIT],
-          );
-
-          const newBalance = currentBalance - pointsToBurn;
-          return { success: true as const, entryId, newBalance };
+          return { duplicate: false as const, requestId, jobId };
         });
 
-        if (!result.success) {
-          reply.code(422).send({ error: result.reason });
+        if (outcome.duplicate) {
+          reply
+            .code(409)
+            .send({
+              redemption_id: outcome.requestId,
+              processing_job_id: outcome.jobId,
+              status: (outcome.status as JobStatus) ?? 'queued',
+            });
           return;
         }
 
-        reply.send({ entry_id: result.entryId, new_balance: Number(result.newBalance) });
+        reply.code(202).send({
+          redemption_id: outcome.requestId,
+          processing_job_id: outcome.jobId,
+          status: 'queued',
+        });
       } catch (error) {
-        app.log.error({ err: error }, 'Failed to redeem points');
-        reply.code(500).send({ error: 'Failed to redeem' });
+        app.log.error({ err: error }, 'Failed to queue redemption');
+        reply.code(500).send({ error: 'Failed to queue redemption' });
       }
     },
   );

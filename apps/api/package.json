@@ -8,6 +8,7 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
+    "@loyaltyledger/core": "workspace:*",
     "dotenv": "^17.2.2",
     "fastify": "^4.26.2",
     "fastify-plugin": "^5.1.0",
