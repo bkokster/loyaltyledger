@@ -22,6 +22,15 @@ export interface UpsertTierArgs {
   rollingSpendCents: bigint;
 }
 
+export interface CustomerTierInfo {
+  tierId: string;
+  tierName?: string;
+  windowDays: number;
+  windowStart: Date;
+  windowEnd: Date;
+  rollingSpendCents: bigint;
+}
+
 export interface PluginHelpers {
   now(): Date;
   generateId(): string;
@@ -29,6 +38,7 @@ export interface PluginHelpers {
   getAccountBalance(accountId: string, programId: string, unit: string): Promise<bigint>;
   getRollingSpendCents(args: RollingSpendArgs): Promise<bigint>;
   upsertCustomerTier(args: UpsertTierArgs): Promise<void>;
+  getCustomerTier(tenantId: string, merchantId: string, customerAccount: string): Promise<CustomerTierInfo | null>;
 }
 
 export interface ReceiptPlugin {

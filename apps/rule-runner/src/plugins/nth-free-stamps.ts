@@ -23,6 +23,7 @@ interface StampProgram {
   stampsPerItem: number;
   unit?: string;
   couponUnit?: string;
+  tierOverrides: Map<string, { stampsPerItem?: number; threshold?: number }>;
 }
 
 function parseStampPrograms(raw: unknown): StampProgram[] {
@@ -63,6 +64,40 @@ function parseStampPrograms(raw: unknown): StampProgram[] {
         ? entry.coupon_unit
         : undefined;
 
+    const tierOverrides = new Map<string, { stampsPerItem?: number; threshold?: number }>();
+    if (Array.isArray((entry as any).tier_overrides)) {
+      for (const override of (entry as any).tier_overrides ?? []) {
+        if (!override || typeof override !== 'object') {
+          continue;
+        }
+        const tierId =
+          typeof override.tier_id === 'string' && override.tier_id.trim().length > 0
+            ? override.tier_id.trim()
+            : undefined;
+        if (!tierId) {
+          continue;
+        }
+        const overrideObject: { stampsPerItem?: number; threshold?: number } = {};
+        if (
+          typeof override.stamps_per_item === 'number' &&
+          Number.isFinite(override.stamps_per_item) &&
+          override.stamps_per_item > 0
+        ) {
+          overrideObject.stampsPerItem = override.stamps_per_item;
+        }
+        if (
+          typeof override.threshold === 'number' &&
+          Number.isFinite(override.threshold) &&
+          override.threshold > 0
+        ) {
+          overrideObject.threshold = override.threshold;
+        }
+        if (Object.keys(overrideObject).length > 0) {
+          tierOverrides.set(tierId, overrideObject);
+        }
+      }
+    }
+
     programs.push({
       id,
       skus,
@@ -70,6 +105,7 @@ function parseStampPrograms(raw: unknown): StampProgram[] {
       stampsPerItem,
       unit,
       couponUnit,
+      tierOverrides,
     });
   }
 
@@ -91,6 +127,11 @@ export const nthFreeStampsPlugin: ReceiptPlugin = {
     const { tenantId, receipt, receiptId } = context;
     const merchantAccount = merchantAccountId(tenantId);
     const customerAccount = customerAccountId(tenantId, receipt.buyer.account_ref);
+    const currentTier = await helpers.getCustomerTier(
+      tenantId,
+      receipt.merchant.merchant_id,
+      customerAccount,
+    );
 
     const entries: LedgerEntry[] = [];
     const stampsSummary: Record<string, number> = {};
@@ -98,6 +139,18 @@ export const nthFreeStampsPlugin: ReceiptPlugin = {
 
     for (const program of programs) {
       const skuSet = new Set(program.skus.map((sku) => sku.toLowerCase()));
+
+       let effectiveStampsPerItem = program.stampsPerItem;
+       let effectiveThreshold = program.threshold;
+       if (currentTier) {
+         const override = program.tierOverrides.get(currentTier.tierId);
+         if (override?.stampsPerItem && override.stampsPerItem > 0) {
+           effectiveStampsPerItem = override.stampsPerItem;
+         }
+         if (override?.threshold && override.threshold > 0) {
+           effectiveThreshold = override.threshold;
+         }
+       }
 
       let stampsToAdd = 0n;
       for (const line of receipt.line_items) {
@@ -108,7 +161,7 @@ export const nthFreeStampsPlugin: ReceiptPlugin = {
         if (qty <= 0) {
           continue;
         }
-        const rawStamps = qty * program.stampsPerItem;
+        const rawStamps = qty * effectiveStampsPerItem;
         const stampsForLine = BigInt(Math.floor(rawStamps));
         if (stampsForLine > 0n) {
           stampsToAdd += stampsForLine;
@@ -149,8 +202,8 @@ export const nthFreeStampsPlugin: ReceiptPlugin = {
 
       stampsSummary[program.id] = (stampsSummary[program.id] ?? 0) + Number(stampsToAdd);
 
-      if (program.threshold && program.threshold > 0) {
-        const threshold = BigInt(Math.floor(program.threshold));
+      if (effectiveThreshold && effectiveThreshold > 0) {
+        const threshold = BigInt(Math.floor(effectiveThreshold));
         if (threshold > 0n) {
           const previousRewards = previousBalance / threshold;
           const newRewards = newBalance / threshold;

@@ -775,6 +775,37 @@ function createReceiptHelpers(client: PoolClient, tenantId: string): PluginHelpe
         ],
       );
     },
+    getCustomerTier: async (tenantIdArg, merchantId, customerAccount) => {
+      const tierRes = await client.query<{
+        tier_id: string;
+        tier_name: string | null;
+        window_days: number;
+        window_start: string;
+        window_end: string;
+        rolling_spend_cents: string | number | null;
+      }>(
+        `SELECT tier_id, tier_name, window_days, window_start, window_end, rolling_spend_cents
+           FROM customer_tiers
+          WHERE tenant_id = $1
+            AND merchant_id = $2
+            AND customer_account = $3`,
+        [tenantIdArg, merchantId, customerAccount],
+      );
+
+      if (tierRes.rowCount === 0) {
+        return null;
+      }
+
+      const row = tierRes.rows[0];
+      return {
+        tierId: row.tier_id,
+        tierName: row.tier_name ?? undefined,
+        windowDays: row.window_days,
+        windowStart: new Date(row.window_start),
+        windowEnd: new Date(row.window_end),
+        rollingSpendCents: BigInt(row.rolling_spend_cents ?? 0),
+      };
+    },
   };
 }
 

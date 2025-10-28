@@ -81,6 +81,15 @@ const stampProgramSchema = z.object({
   threshold: z.number().positive().optional(),
   unit: z.string().min(1).optional(),
   coupon_unit: z.string().min(1).optional(),
+  tier_overrides: z
+    .array(
+      z.object({
+        tier_id: z.string().min(1),
+        stamps_per_item: z.number().positive().optional(),
+        threshold: z.number().positive().optional(),
+      }),
+    )
+    .optional(),
 });
 
 const loyaltyTierSchema = z.object({

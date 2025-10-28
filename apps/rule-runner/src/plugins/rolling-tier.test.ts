@@ -9,6 +9,7 @@ const baseHelpers = (): PluginHelpers => ({
   getAccountBalance: async () => 0n,
   getRollingSpendCents: async () => 0n,
   upsertCustomerTier: async () => {},
+  getCustomerTier: async () => null,
 });
 
 describe('rollingTierPlugin', () => {

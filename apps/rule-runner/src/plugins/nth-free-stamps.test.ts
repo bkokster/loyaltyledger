@@ -33,6 +33,7 @@ describe('nthFreeStampsPlugin', () => {
       getAccountBalance: async () => 0n,
       getRollingSpendCents: async () => 0n,
       upsertCustomerTier: async () => {},
+      getCustomerTier: async () => null,
     };
 
     const result = await nthFreeStampsPlugin.apply(
@@ -60,6 +61,7 @@ describe('nthFreeStampsPlugin', () => {
       getAccountBalance: async () => 0n,
       getRollingSpendCents: async () => 0n,
       upsertCustomerTier: async () => {},
+      getCustomerTier: async () => null,
     };
 
     const result = await nthFreeStampsPlugin.apply(
@@ -110,6 +112,7 @@ describe('nthFreeStampsPlugin', () => {
       getAccountBalance: async (_accountId, _programId, unit) => balanceByUnit[unit] ?? 0n,
       getRollingSpendCents: async () => 0n,
       upsertCustomerTier: async () => {},
+      getCustomerTier: async () => null,
     };
 
     const result = await nthFreeStampsPlugin.apply(
@@ -138,6 +141,62 @@ describe('nthFreeStampsPlugin', () => {
 
     expect(result?.summary).toEqual({
       stamps_added: { coffee_card: 2 },
+      coupons_issued: { coffee_card: 1 },
+    });
+  });
+
+  it('applies tier overrides when present', async () => {
+    const balanceByUnit: Record<string, bigint> = {
+      'stamps:coffee_card': 3n,
+    };
+
+    const helpers: PluginHelpers = {
+      now: () => new Date('2024-01-01T00:00:00Z'),
+      generateId: () => 'id',
+      getProgramConfig: async () =>
+        ({
+          stamp_programs: [
+            {
+              id: 'coffee_card',
+              skus: ['COFFEE_SM', 'COFFEE_LG'],
+              stamps_per_item: 1,
+              threshold: 10,
+              tier_overrides: [
+                { tier_id: 'silver', stamps_per_item: 2, threshold: 6 },
+              ],
+            },
+          ],
+        }) as any,
+      getAccountBalance: async (_accountId, _programId, unit) => balanceByUnit[unit] ?? 0n,
+      getRollingSpendCents: async () => 0n,
+      upsertCustomerTier: async () => {},
+      getCustomerTier: async () => ({
+        tierId: 'silver',
+        tierName: 'Silver',
+        windowDays: 90,
+        windowStart: new Date('2023-10-01T00:00:00Z'),
+        windowEnd: new Date('2024-01-01T00:00:00Z'),
+        rollingSpendCents: 20000n,
+      }),
+    };
+
+    const result = await nthFreeStampsPlugin.apply(
+      { tenantId: 'tenant_test', receipt: baseReceipt, receiptId: 'r1' },
+      helpers,
+    );
+
+    expect(result).not.toBeNull();
+    expect(result?.entries).toHaveLength(2);
+
+    const stampEntry = result?.entries[0];
+    expect(stampEntry?.lines[0]?.debit).toBe(4n);
+    expect(stampEntry?.lines[1]?.credit).toBe(4n);
+
+    const couponEntry = result?.entries[1];
+    expect(couponEntry?.lines[1]?.credit).toBe(1n);
+
+    expect(result?.summary).toEqual({
+      stamps_added: { coffee_card: 4 },
       coupons_issued: { coffee_card: 1 },
     });
   });
